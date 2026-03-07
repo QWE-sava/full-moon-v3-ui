@@ -1,178 +1,85 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Full Moon v3 | 興風祭 投票システム</title>
-    <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
-    
-    <style>
-        :root {
-            --bg-color: #0f172a;
-            --card-bg: #1e293b;
-            --accent-color: #38bdf8;
-            --text-main: #f8fafc;
-            --success-color: #fbbf24;
-            --warn-color: #f87171;
-        }
-
-        body {
-            font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-main);
-            margin: 0; padding: 0;
-            overflow: hidden;
-            user-select: none;
-            -webkit-tap-highlight-color: transparent;
-        }
-
-        .screen {
-            position: absolute; top: 0; left: 0;
-            height: 100vh; width: 100vw;
-            display: flex; flex-direction: column;
-            align-items: center; justify-content: center;
-            transition: all 0.5s ease-in-out;
-        }
-
-        .hidden { opacity: 0; pointer-events: none; transform: scale(0.9); }
-
-        /* --- スキャン画面 --- */
-        #video-container {
-            position: relative;
-            width: 85vw; max-width: 500px;
-            aspect-ratio: 4 / 3;
-            border-radius: 24px;
-            overflow: hidden;
-            border: 4px solid var(--accent-color);
-            box-shadow: 0 0 50px rgba(56, 189, 248, 0.15);
-        }
-
-        video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
-
-        .scan-line {
-            position: absolute; top: 0; left: 0; width: 100%; height: 4px;
-            background: var(--accent-color);
-            box-shadow: 0 0 15px var(--accent-color);
-            animation: scanMove 3s infinite ease-in-out;
-        }
-
-        @keyframes scanMove { 0%, 100% { top: 0%; } 50% { top: 100%; } }
-
-        /* --- 警告・ステータス --- */
-        .alert-box {
-            margin-top: 15px; padding: 12px 25px;
-            border-radius: 12px; font-weight: bold;
-            background: rgba(248, 113, 113, 0.15);
-            border: 1px solid var(--warn-color);
-            color: var(--warn-color);
-            transition: 0.3s;
-        }
-
-        /* --- 投票ボタン --- */
-        .grid {
-            display: grid; grid-template-columns: repeat(2, 1fr);
-            gap: 15px; width: 90%; max-width: 750px;
-        }
-
-        .club-card {
-            background: var(--card-bg); border: 2px solid #334155;
-            padding: 40px 10px; border-radius: 20px;
-            cursor: pointer; font-size: 1.3rem; font-weight: bold;
-            transition: 0.2s; text-align: center;
-        }
-
-        .club-card:active {
-            transform: scale(0.93); background: var(--accent-color); color: var(--bg-color);
-        }
-
-        /* --- 完了演出 --- */
-        .thanks-h1 { font-size: 5rem; color: var(--success-color); margin: 0; }
-        
-        #status-text { margin-top: 20px; font-size: 1.1rem; color: var(--accent-color); }
-    </style>
-</head>
-<body>
-
-    <div id="screen-auth" class="screen">
-        <h1 style="margin-bottom: 10px;">Face ID 認証</h1>
-        <div id="face-alert" class="alert-box" style="visibility: hidden;">⚠️ マスク・眼鏡を外してください</div>
-        
-        <div id="video-container" style="margin-top: 15px;">
-            <video id="video" autoplay muted playsinline></video>
-            <div class="scan-line"></div>
-        </div>
-        
-        <div id="status-text">カメラに顔を映してください</div>
-    </div>
-
-    <div id="screen-vote" class="screen hidden">
-        <h1 style="margin-bottom: 30px;">一番良かった部活は？</h1>
-        <div id="club-grid" class="grid"></div>
-    </div>
-
-    <div id="screen-thanks" class="screen hidden">
-        <h1 class="thanks-h1">VOTED!</h1>
-        <p style="font-size: 1.5rem;">ご協力ありがとうございました</p>
-        <div style="margin-top: 40px; opacity: 0.4;">Waseda Physics Club - LEGO Team</div>
-    </div>
-
-    <script>
+<script>
         const API_BASE = "https://full-moon-v3.nengjianxingtai44.workers.dev"; 
         const CLUBS = ["物理研究部", "化学部", "生物部", "地学部", "マジック同好会", "吹奏楽部", "鉄道研究部"];
         
         let currentVoterId = null;
         let isProcessing = false;
+        let modelsLoaded = false;
 
         async function init() {
+            const status = document.getElementById('status-text');
+            status.innerText = "AIモデルを準備中...";
+            
             const MODEL_URL = 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights';
             
             try {
-                await Promise.all([
-                    faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-                    faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-                    faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
-                ]);
+                // モデル読み込み
+                await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+                await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+                await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+                modelsLoaded = true;
                 
-                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
-                document.getElementById('video').srcObject = stream;
+                // カメラ起動
+                const video = document.getElementById('video');
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: "user", width: 640, height: 480 } 
+                });
+                video.srcObject = stream;
+
+                // ビデオが実際に再生開始されるのを待つ
+                video.onloadedmetadata = () => {
+                    video.play();
+                    status.innerText = "準備完了！顔を映してください";
+                    processLoop(); // ここでループ開始！
+                };
                 
-                // 監視ループ開始
-                requestAnimationFrame(processLoop);
             } catch (err) {
-                document.getElementById('status-text').innerText = "エラー: カメラを起動できません";
+                status.innerText = "エラー: " + err.message;
+                console.error(err);
             }
         }
 
         async function processLoop() {
-            // 認証済みか、処理中の場合はスキップ
-            if (currentVoterId || isProcessing) {
-                requestAnimationFrame(processLoop);
+            // 1. 認証済み、処理中、またはモデル未ロードなら次へ
+            if (currentVoterId || isProcessing || !modelsLoaded) {
+                setTimeout(() => processLoop(), 500); // 0.5秒後に再試行
                 return;
             }
 
             const video = document.getElementById('video');
-            const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
-                                .withFaceLandmarks().withFaceDescriptor();
-
-            if (detection) {
-                // 【追加ロジック】マスク・眼鏡チェック（鼻や口のランドマークがあるか）
-                const landmarks = detection.landmarks;
-                const nose = landmarks.getNose();
-                const mouth = landmarks.getMouth();
-
-                // 鼻や口が極端に隠れている場合の簡易判定
-                if (!nose || nose.length < 5 || !mouth || mouth.length < 5) {
-                    showAlert(true);
-                } else {
-                    showAlert(false);
-                    await handleAuth(detection.descriptor);
-                }
-            } else {
-                showAlert(false);
+            
+            // ビデオが準備できていない場合はスキップ
+            if (video.paused || video.ended || video.readyState < 2) {
+                requestAnimationFrame(processLoop);
+                return;
             }
 
-            requestAnimationFrame(processLoop);
+            try {
+                const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+                                    .withFaceLandmarks().withFaceDescriptor();
+
+                if (detection) {
+                    const landmarks = detection.landmarks;
+                    const nose = landmarks.getNose();
+                    const mouth = landmarks.getMouth();
+
+                    // マスク・眼鏡チェック
+                    if (!nose || nose.length < 5 || !mouth || mouth.length < 5) {
+                        showAlert(true);
+                        requestAnimationFrame(processLoop);
+                    } else {
+                        showAlert(false);
+                        await handleAuth(detection.descriptor);
+                        // handleAuthが終わるまでloopは止まる
+                    }
+                } else {
+                    showAlert(false);
+                    requestAnimationFrame(processLoop);
+                }
+            } catch (e) {
+                console.error("Detection Error:", e);
+                requestAnimationFrame(processLoop);
+            }
         }
 
         function showAlert(show) {
@@ -181,7 +88,8 @@
 
         async function handleAuth(descriptor) {
             isProcessing = true;
-            document.getElementById('status-text').innerText = "解析中...";
+            const status = document.getElementById('status-text');
+            status.innerText = "解析中...";
 
             try {
                 const res = await fetch(`${API_BASE}/auth`, {
@@ -192,15 +100,21 @@
                 const data = await res.json();
 
                 if (data.is_voted) {
-                    document.getElementById('status-text').innerText = "既に投票済みです";
-                    setTimeout(() => { isProcessing = false; document.getElementById('status-text').innerText = "カメラに顔を映してください"; }, 3000);
+                    status.innerText = "既に投票済みです";
+                    // 3秒待ってからスキャン再開
+                    await new Promise(r => setTimeout(r, 3000));
+                    isProcessing = false;
+                    status.innerText = "カメラに顔を映してください";
+                    requestAnimationFrame(processLoop);
                 } else {
                     currentVoterId = data.voter_id;
                     transitionTo("screen-vote");
                 }
             } catch (e) {
+                status.innerText = "通信エラー。再試行中...";
+                await new Promise(r => setTimeout(r, 2000));
                 isProcessing = false;
-                document.getElementById('status-text').innerText = "通信エラー。再試行中...";
+                requestAnimationFrame(processLoop);
             }
         }
 
@@ -238,16 +152,14 @@
             transitionTo("screen-thanks");
             confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } });
 
-            // 5秒後に「リロードなし」で認証画面へ戻る
             setTimeout(() => {
                 currentVoterId = null;
                 isProcessing = false;
                 document.getElementById('status-text').innerText = "カメラに顔を映してください";
                 transitionTo("screen-auth");
+                requestAnimationFrame(processLoop); // 監視再開
             }, 5000);
         }
 
         window.onload = init;
     </script>
-</body>
-</html>
