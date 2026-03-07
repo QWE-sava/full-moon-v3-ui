@@ -1,4 +1,87 @@
-<script>
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Full Moon v3 | 興風祭 投票システム</title>
+    <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+    
+    <style>
+        :root {
+            --bg-color: #0f172a; --card-bg: #1e293b; --accent-color: #38bdf8;
+            --text-main: #f8fafc; --success-color: #fbbf24; --warn-color: #f87171;
+        }
+        body {
+            font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
+            background-color: var(--bg-color); color: var(--text-main);
+            margin: 0; padding: 0; overflow: hidden; user-select: none;
+        }
+        .screen {
+            position: absolute; top: 0; left: 0; height: 100vh; width: 100vw;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            transition: all 0.5s ease-in-out;
+        }
+        .hidden { opacity: 0; pointer-events: none; transform: scale(0.9); }
+
+        /* スキャンエリア */
+        #video-container {
+            position: relative; width: 85vw; max-width: 500px; aspect-ratio: 4 / 3;
+            border-radius: 24px; overflow: hidden; border: 4px solid var(--accent-color);
+            box-shadow: 0 0 50px rgba(56, 189, 248, 0.15);
+        }
+        video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        .scan-line {
+            position: absolute; top: 0; left: 0; width: 100%; height: 4px;
+            background: var(--accent-color); box-shadow: 0 0 15px var(--accent-color);
+            animation: scanMove 3s infinite ease-in-out;
+        }
+        @keyframes scanMove { 0%, 100% { top: 0%; } 50% { top: 100%; } }
+
+        /* 警告・メッセージ */
+        .alert-box {
+            margin-bottom: 15px; padding: 12px 25px; border-radius: 12px; font-weight: bold;
+            background: rgba(248, 113, 113, 0.15); border: 1px solid var(--warn-color);
+            color: var(--warn-color); visibility: hidden;
+        }
+        #status-text { margin-top: 20px; font-size: 1.2rem; color: var(--accent-color); font-weight: bold; }
+
+        /* 投票ボタン */
+        .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; width: 90%; max-width: 750px; }
+        .club-card {
+            background: var(--card-bg); border: 2px solid #334155; padding: 35px 10px;
+            border-radius: 20px; cursor: pointer; font-size: 1.3rem; font-weight: bold;
+            transition: 0.2s; text-align: center;
+        }
+        .club-card:active { transform: scale(0.93); background: var(--accent-color); color: var(--bg-color); }
+        .thanks-h1 { font-size: 5rem; color: var(--success-color); margin: 0; }
+    </style>
+</head>
+<body>
+
+    <div id="screen-auth" class="screen">
+        <h1 style="margin-bottom: 10px;">Face ID 認証</h1>
+        <div id="face-alert" class="alert-box">⚠️ マスク・眼鏡を外してください</div>
+        
+        <div id="video-container">
+            <video id="video" autoplay muted playsinline></video>
+            <div class="scan-line"></div>
+        </div>
+        <div id="status-text">システム起動中...</div>
+    </div>
+
+    <div id="screen-vote" class="screen hidden">
+        <h1 style="margin-bottom: 30px;">一番良かった部活は？</h1>
+        <div id="club-grid" class="grid"></div>
+    </div>
+
+    <div id="screen-thanks" class="screen hidden">
+        <h1 class="thanks-h1">VOTED!</h1>
+        <p style="font-size: 1.5rem;">投票ありがとうございます</p>
+        <div style="margin-top: 40px; opacity: 0.4;">Waseda Physics Club - LEGO Team</div>
+    </div>
+
+    <script>
         const API_BASE = "https://full-moon-v3.nengjianxingtai44.workers.dev"; 
         const CLUBS = ["物理研究部", "化学部", "生物部", "地学部", "マジック同好会", "吹奏楽部", "鉄道研究部"];
         
@@ -8,31 +91,30 @@
 
         async function init() {
             const status = document.getElementById('status-text');
-            status.innerText = "AIモデルを準備中...";
-            
-            const MODEL_URL = 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights';
-            
+            const video = document.getElementById('video');
+
             try {
-                // モデル読み込み
-                await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
-                await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
-                await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
-                modelsLoaded = true;
+                status.innerText = "AIモデルを準備中...";
+                const MODEL_URL = 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights';
                 
-                // カメラ起動
-                const video = document.getElementById('video');
+                await Promise.all([
+                    faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+                    faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+                    faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+                ]);
+                modelsLoaded = true;
+
+                status.innerText = "カメラを起動中...";
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { facingMode: "user", width: 640, height: 480 } 
                 });
                 video.srcObject = stream;
 
-                // ビデオが実際に再生開始されるのを待つ
                 video.onloadedmetadata = () => {
                     video.play();
                     status.innerText = "準備完了！顔を映してください";
-                    processLoop(); // ここでループ開始！
+                    requestAnimationFrame(processLoop);
                 };
-                
             } catch (err) {
                 status.innerText = "エラー: " + err.message;
                 console.error(err);
@@ -40,16 +122,13 @@
         }
 
         async function processLoop() {
-            // 1. 認証済み、処理中、またはモデル未ロードなら次へ
             if (currentVoterId || isProcessing || !modelsLoaded) {
-                setTimeout(() => processLoop(), 500); // 0.5秒後に再試行
+                requestAnimationFrame(processLoop);
                 return;
             }
 
             const video = document.getElementById('video');
-            
-            // ビデオが準備できていない場合はスキップ
-            if (video.paused || video.ended || video.readyState < 2) {
+            if (video.paused || video.readyState < 2) {
                 requestAnimationFrame(processLoop);
                 return;
             }
@@ -63,33 +142,25 @@
                     const nose = landmarks.getNose();
                     const mouth = landmarks.getMouth();
 
-                    // マスク・眼鏡チェック
+                    // 鼻や口が隠れているかチェック
                     if (!nose || nose.length < 5 || !mouth || mouth.length < 5) {
-                        showAlert(true);
-                        requestAnimationFrame(processLoop);
+                        document.getElementById('face-alert').style.visibility = "visible";
                     } else {
-                        showAlert(false);
+                        document.getElementById('face-alert').style.visibility = "hidden";
                         await handleAuth(detection.descriptor);
-                        // handleAuthが終わるまでloopは止まる
                     }
                 } else {
-                    showAlert(false);
-                    requestAnimationFrame(processLoop);
+                    document.getElementById('face-alert').style.visibility = "hidden";
                 }
-            } catch (e) {
-                console.error("Detection Error:", e);
-                requestAnimationFrame(processLoop);
-            }
-        }
+            } catch (e) { console.error(e); }
 
-        function showAlert(show) {
-            document.getElementById('face-alert').style.visibility = show ? "visible" : "hidden";
+            requestAnimationFrame(processLoop);
         }
 
         async function handleAuth(descriptor) {
             isProcessing = true;
             const status = document.getElementById('status-text');
-            status.innerText = "解析中...";
+            status.innerText = "照合中...";
 
             try {
                 const res = await fetch(`${API_BASE}/auth`, {
@@ -101,28 +172,25 @@
 
                 if (data.is_voted) {
                     status.innerText = "既に投票済みです";
-                    // 3秒待ってからスキャン再開
                     await new Promise(r => setTimeout(r, 3000));
+                    status.innerText = "顔を映してください";
                     isProcessing = false;
-                    status.innerText = "カメラに顔を映してください";
-                    requestAnimationFrame(processLoop);
                 } else {
                     currentVoterId = data.voter_id;
-                    transitionTo("screen-vote");
+                    showScreen("screen-vote");
                 }
             } catch (e) {
-                status.innerText = "通信エラー。再試行中...";
+                status.innerText = "通信エラー。再試行...";
                 await new Promise(r => setTimeout(r, 2000));
                 isProcessing = false;
-                requestAnimationFrame(processLoop);
             }
         }
 
-        function transitionTo(targetId) {
+        function showScreen(id) {
             document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
-            document.getElementById(targetId).classList.remove('hidden');
+            document.getElementById(id).classList.remove('hidden');
 
-            if (targetId === "screen-vote") {
+            if (id === "screen-vote") {
                 const grid = document.getElementById('club-grid');
                 grid.innerHTML = '';
                 CLUBS.forEach(club => {
@@ -137,29 +205,27 @@
 
         async function submitVote(club) {
             try {
-                const res = await fetch(`${API_BASE}/vote`, {
+                await fetch(`${API_BASE}/vote`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ voter_id: currentVoterId, club_name: club })
                 });
-                if (res.ok) showThanks();
-            } catch (e) {
-                alert("送信に失敗しました");
-            }
+                showThanks();
+            } catch (e) { alert("送信失敗"); }
         }
 
         function showThanks() {
-            transitionTo("screen-thanks");
+            showScreen("screen-thanks");
             confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 } });
-
             setTimeout(() => {
-                currentVoterId = null;
-                isProcessing = false;
-                document.getElementById('status-text').innerText = "カメラに顔を映してください";
-                transitionTo("screen-auth");
-                requestAnimationFrame(processLoop); // 監視再開
+                currentVoterId = null; isProcessing = false;
+                document.getElementById('status-text').innerText = "顔を映してください";
+                showScreen("screen-auth");
             }, 5000);
         }
 
-        window.onload = init;
+        // HTML読み込み完了後に実行
+        window.addEventListener('DOMContentLoaded', init);
     </script>
+</body>
+</html>
